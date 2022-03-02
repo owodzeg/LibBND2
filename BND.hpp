@@ -9,6 +9,7 @@
 class BND
 {
     public:
+    int type = 0; ///0 = regular bnd, 1 = with external dictionary
     std::string original_name = "";
     std::string data_file = "";
 
@@ -29,8 +30,9 @@ class BND
     std::vector<File> files;
 
     BND();
-    bool load(const std::string& file);
+    bool load(const std::string& file, bool log = true);
     bool load(const std::string& dict_file, const std::string& ddata_file, bool encrypted);
+    bool loadFromMem(const std::string& filename, std::vector<unsigned char>& file, bool log = true);
     uint32_t count_files();
     uint32_t count_entries();
     std::string get_full_name(int id);
@@ -38,7 +40,7 @@ class BND
     int get_type(int id);
     void list_all_files();
     void list_sorted_via_offset();
-    void extract(int id);
+    void extract(int id, std::string destination="");
     void extract_gzip(int id);
     void extract_all();
     void extract_literally_everything_dont_use_ever(BND bnd_handle);

@@ -7,6 +7,9 @@
 #include <fstream>
 #include <algorithm>
 #include <iterator>
+#include <chrono>
+#include <sstream>
+#include <windows.h>
 
 using namespace std;
 
@@ -16,14 +19,42 @@ std::ifstream::pos_type filesize(const std::string& filename)
     return in.tellg();
 }
 
+void logger(uint8_t color, string header, string message)
+{
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    SetConsoleTextAttribute(handle, color);
+    cout << header;
+
+    uint8_t hibyte = (color & 0xf0) >> 4;
+    uint8_t lobyte = (color & 0x0f);
+    color = lobyte << 4 | hibyte;
+
+    SetConsoleTextAttribute(handle, color);
+    cout << " " << message << endl;
+
+    SetConsoleTextAttribute(handle, 7);
+}
+
+std::string to_hstring(int a)
+{
+    stringstream ss;
+    ss << hex << a;
+    return ss.str();
+}
+
 BND::BND()
 {
 
 }
 
-bool BND::load(const std::string& file)
+bool BND::load(const std::string& file, bool log)
 {
-    cout << "attempt extracting " << file << endl;
+    auto t_start = chrono::steady_clock::now();
+
+    if(log)
+    logger(0x20, "[BND]", "Attempting to read: "+file);
+    //cout << "[BND] Attempting to read: " << file << endl;
 
     original_name = file;
 
@@ -65,16 +96,21 @@ bool BND::load(const std::string& file)
 
     uint32_t offset = 0x0; ///reading offset
 
-    cout << "BND version " << int(version) << endl;
-
     if(!((int(version) >= 1) && (int(version) <= 5)))
     return false;
 
-    cout << std::hex << "Version " << int(version) << " Info: 0x" << p_info << " File: 0x" << p_file << std::dec << endl;
+    if(log)
+    logger(0x20, "[BND]", "Version: "+to_string(int(version)));
+    if(log)
+    logger(0x20, "[BND]", "Info offset at: 0x"+to_hstring(p_info));
+    if(log)
+    logger(0x20, "[BND]", "File offset at: 0x"+to_hstring(p_file));
 
     for(int i=0; i<p_entries; i++)
     {
-        cout << std::hex << p_info+offset << " " << p_file << std::dec << endl;
+        //cout << std::hex << p_info+offset << " " << p_file << std::dec << endl;
+        //logger(0x20, "[BND]", "Reading entry "+to_string(i+1)+"/"+to_string(p_entries));
+
         File temp;
 
         uint32_t p_crc = Binary::get_uint32(data,p_info+offset+3);
@@ -85,8 +121,16 @@ bool BND::load(const std::string& file)
             uint32_t f_pointer = Binary::get_uint32(crc_block, 0x8);
             uint32_t f_size = Binary::get_uint32(crc_block, 0xC);
 
+            //logger(0x20, "[BND]", "F_pointer: 0x"+to_hstring(f_pointer)+" F_size: 0x"+to_hstring(f_size));
+
+            if(f_size >= 0x20000000)
+            f_size -= 0x20000000;
+
             temp.level = int8_t(static_cast<unsigned char>(Binary::get_uint8(data,p_info+offset)));
+
+            if(f_pointer < data.size())
             temp.data = Binary::get_block(data, f_pointer, f_size);
+
             temp.name = Binary::get_string(data,p_info+offset+7);
 
             temp.dbg_data_offset = f_pointer;
@@ -97,15 +141,33 @@ bool BND::load(const std::string& file)
         }
     }
 
-    cout << "done" << endl;
+    if(log)
+    logger(0x20, "[BND]", "File loaded successfully.");
+
+    //  Insert the code that will be timed
+
+    auto t_end = chrono::steady_clock::now();
+
+    // Store the time difference between start and end
+    auto diff = t_end - t_start;
+
+    float diff_sec = chrono::duration_cast<chrono::milliseconds>(diff).count();
+    if(log)
+    logger(0x20, "[BND]", "Time taken: "+to_string(diff_sec/float(1000))+" seconds");
 
     return true;
 }
 
 bool BND::load(const std::string& dict_file, const std::string& ddata_file, bool encrypted)
 {
+    type = 1;
+
+    auto t_start = chrono::steady_clock::now();
+
     original_name = dict_file;
     data_file = ddata_file;
+
+    logger(0x20, "[BND]", "Attempting to read: "+original_name+" and "+data_file);
 
     vector<unsigned char> data = Binary::file_to_uchar(Binary::get_file(dict_file));
     vector<unsigned char> file_data = Binary::file_to_uchar(Binary::get_file(data_file));
@@ -118,7 +180,9 @@ bool BND::load(const std::string& dict_file, const std::string& ddata_file, bool
     uint32_t p_info = Binary::get_uint32(data,0x10);
     uint32_t p_file = Binary::get_uint32(data,0x14);
 
-    cout << std::hex << "Version " << int(version) << " Info: 0x" << p_info << " File: 0x" << p_file << std::dec << endl;
+    logger(0x20, "[BND]", "Version: "+to_string(int(version)));
+    logger(0x20, "[BND]", "Info offset at: 0x"+to_hstring(p_info));
+    logger(0x20, "[BND]", "File offset at: 0x"+to_hstring(p_file));
 
     uint32_t test = 0x0;
 
@@ -136,7 +200,8 @@ bool BND::load(const std::string& dict_file, const std::string& ddata_file, bool
 
     if(encrypted)
     {
-        cout << "Decrypting..." << endl;
+        //cout << "Decrypting..." << endl;
+        logger(0x90, "[P3Hash]", "Decrypting the data file...");
         encrypt = true;
     }
 
@@ -207,7 +272,128 @@ bool BND::load(const std::string& dict_file, const std::string& ddata_file, bool
         test = Binary::get_uint32(data,p_info+offset);
     }
 
-    cout << "BND loaded successfully" << endl;
+    logger(0x20, "[BND]", "File loaded successfully.");
+
+    //  Insert the code that will be timed
+
+    auto t_end = chrono::steady_clock::now();
+
+    // Store the time difference between start and end
+    auto diff = t_end - t_start;
+
+    float diff_sec = chrono::duration_cast<chrono::milliseconds>(diff).count();
+    logger(0x20, "[BND]", "Time taken: "+to_string(diff_sec/float(1000))+" seconds");
+
+    return true;
+}
+
+bool BND::loadFromMem(const std::string& filename, std::vector<unsigned char>& file, bool log)
+{
+    auto t_start = chrono::steady_clock::now();
+
+    if(log)
+    logger(0x20, "[BND]", "Attempting to read: "+filename);
+    //cout << "[BND] Attempting to read: " << file << endl;
+
+    original_name = filename;
+
+    vector<unsigned char> data = file;
+
+    if(data.size() <= 0)
+    return false;
+
+    if(Binary::get_uint8(data, 0x0) != 'B')
+    return false;
+
+    if(Binary::get_uint8(data, 0x1) != 'N')
+    return false;
+
+    if(Binary::get_uint8(data, 0x2) != 'D')
+    return false;
+
+    version = Binary::get_uint8(data,0x4);
+
+    uint32_t p_info = Binary::get_uint32(data,0x10);
+    uint32_t p_file = Binary::get_uint32(data,0x14);
+
+    uint32_t p_entries = Binary::get_uint32(data,0x24);
+
+    if(p_entries <= 0)
+    return false;
+
+    uint32_t test = 0x0;
+
+    while(test == 0x0)
+    {
+        test = Binary::get_uint32(data,0x28+(empty_blocks*0x10));
+
+        if(test == 0x0)
+        empty_blocks++;
+    }
+
+    p_entries -= empty_blocks;
+
+    uint32_t offset = 0x0; ///reading offset
+
+    if(!((int(version) >= 1) && (int(version) <= 5)))
+    return false;
+
+    if(log)
+    logger(0x20, "[BND]", "Version: "+to_string(int(version)));
+    if(log)
+    logger(0x20, "[BND]", "Info offset at: 0x"+to_hstring(p_info));
+    if(log)
+    logger(0x20, "[BND]", "File offset at: 0x"+to_hstring(p_file));
+
+    for(int i=0; i<p_entries; i++)
+    {
+        //cout << std::hex << p_info+offset << " " << p_file << std::dec << endl;
+        //logger(0x20, "[BND]", "Reading entry "+to_string(i+1)+"/"+to_string(p_entries));
+
+        File temp;
+
+        uint32_t p_crc = Binary::get_uint32(data,p_info+offset+3);
+
+        if(p_crc != 0x0)
+        {
+            vector<unsigned char> crc_block = Binary::get_block(data,p_crc,0x10);
+            uint32_t f_pointer = Binary::get_uint32(crc_block, 0x8);
+            uint32_t f_size = Binary::get_uint32(crc_block, 0xC);
+
+            //logger(0x20, "[BND]", "F_pointer: 0x"+to_hstring(f_pointer)+" F_size: 0x"+to_hstring(f_size));
+
+            if(f_size >= 0x20000000)
+            f_size -= 0x20000000;
+
+            temp.level = int8_t(static_cast<unsigned char>(Binary::get_uint8(data,p_info+offset)));
+
+            if(f_pointer < data.size())
+            temp.data = Binary::get_block(data, f_pointer, f_size);
+
+            temp.name = Binary::get_string(data,p_info+offset+7);
+
+            temp.dbg_data_offset = f_pointer;
+
+            files.push_back(temp);
+
+            offset += 7 + temp.name.size() + 1;
+        }
+    }
+
+    if(log)
+    logger(0x20, "[BND]", "File loaded successfully.");
+
+    //  Insert the code that will be timed
+
+    auto t_end = chrono::steady_clock::now();
+
+    // Store the time difference between start and end
+    auto diff = t_end - t_start;
+
+    float diff_sec = chrono::duration_cast<chrono::milliseconds>(diff).count();
+    if(log)
+    logger(0x20, "[BND]", "Time taken: "+to_string(diff_sec/float(1000))+" seconds");
+
     return true;
 }
 
@@ -259,7 +445,9 @@ std::string BND::get_full_name(int id)
 
 void BND::replace_file(int id, const std::string& path)
 {
+    logger(0x20, "[BND]", "Replacing file "+files[id].name+" with "+path);
     files[id].data = Binary::file_to_uchar(Binary::get_file(path));
+    logger(0x20, "[BND]", "File replaced successfully.");
 }
 
 int BND::get_type(int id)
@@ -341,27 +529,40 @@ void BND::list_sorted_via_offset()
     }
 }
 
-void BND::extract(int id)
+void BND::extract(int id, string destination)
 {
-    ///strip the dir
-    string name = get_full_name(id);
-    string a = original_name.substr(0,original_name.find_last_of("\\/")+1);
-    string b = original_name.substr(original_name.find_last_of("\\/")+1);
-
-    string folder = a+"@"+b+"/"+name.substr(0,name.find_last_of("/")+1);
-
-    string cmd = "md "+folder+" >nul 1>nul 2>nul";
-    for(int i=0; i<cmd.size(); i++)
+    if(destination == "")
     {
-        if(cmd[i] == '/')
-        cmd[i] = '\\';
+        ///strip the dir
+        string name = get_full_name(id);
+        string a = original_name.substr(0,original_name.find_last_of("\\/")+1);
+        string b = original_name.substr(original_name.find_last_of("\\/")+1);
+
+        string folder = a+"@"+b+"/"+name.substr(0,name.find_last_of("/")+1);
+
+        string cmd = "md \""+folder+"\" >nul 1>nul 2>nul";
+        for(int i=0; i<cmd.size(); i++)
+        {
+            if(cmd[i] == '/')
+            cmd[i] = '\\';
+        }
+
+        system(cmd.c_str());
+
+        logger(0x20, "[BND]", "Extracting file "+files[id].name+" to "+a+"@"+b+"\\"+name);
+
+        ofstream file(a+"@"+b+"\\"+name, ios::binary);
+        file << Binary::uchar_to_file(files[id].data);
+        file.close();
     }
+    else
+    {
+        logger(0x20, "[BND]", "Extracting file "+files[id].name+" to "+destination);
 
-    system(cmd.c_str());
-
-    ofstream file(a+"@"+b+"\\"+name, ios::binary);
-    file << Binary::uchar_to_file(files[id].data);
-    file.close();
+        ofstream file(destination, ios::binary);
+        file << Binary::uchar_to_file(files[id].data);
+        file.close();
+    }
 }
 
 /*void BND::extract_gzip(string name)
@@ -425,15 +626,17 @@ void BND::extract_literally_everything_dont_use_ever(BND bnd_handle)
 
 void BND::remove_file(int id)
 {
+    logger(0x20, "[BND]", "Removing entry "+files[id].name);
+
     if(files[id].level > 0) ///folder
     {
         int8_t target_level = (files[id].level+1) * (-1);
         files.erase(files.begin()+id); ///remove the folder
 
-        while(id < files.size()-1) ///check if we can go further and start removing files
+        while(id < files.size()) ///check if we can go further and start removing files
         {
             ///yes
-            if(files[id].level == target_level)
+            if(files[id].level <= target_level || files[id].level >= (target_level * (-1)))
             {
                 remove_file(id);
             }
@@ -450,13 +653,16 @@ void BND::remove_file(int id)
     }
 }
 
+
 void BND::add_file(int id, const std::string& path, bool folder)
 {
+    logger(0x20, "[BND]", "Adding file "+path);
+
     int target = -1;
 
     for(int i=id-1; i>=0; i--)
     {
-        cout << "Looking for folder, ID " << i << ", level: " << int(files[i].level) << endl;
+        //cout << "Looking for folder, ID " << i << ", level: " << int(files[i].level) << endl;
 
         if(int(files[i].level) > 0)
         {
@@ -488,14 +694,17 @@ void BND::add_file(int id, const std::string& path, bool folder)
 
     temp.name = name;
 
-    cout << "Adding " << name << " after id " << id << ", level: " << target << ", data size: " << temp.data.size() << " bytes" << endl;
+    //cout << "Adding " << name << " after id " << id << ", level: " << target << ", data size: " << temp.data.size() << " bytes" << endl;
 
     files.insert(files.begin()+id, temp);
 }
 
 void BND::save(const std::string& path)
 {
+    logger(0x20, "[BND]", "Saving file to "+path);
     ofstream out(path, ios::binary);
+
+    logger(0x20, "[BND]", "Building dictionary...");
 
     ///BND header
     uint32_t u32_header = 0x00444E42;
@@ -566,6 +775,8 @@ void BND::save(const std::string& path)
     int8_t folder_lvl = -1;
     int8_t prev_len = -1;
 
+    logger(0x20, "[BND]", "Creating CRC entries...");
+
     for(unsigned int i=0; i<files.size(); i++)
     {
         ///create a CRC entry
@@ -613,6 +824,8 @@ void BND::save(const std::string& path)
         }
     }
 
+    logger(0x20, "[BND]", "Saving CRC entries...");
+
     for(unsigned int i=0; i<crc_entries.size(); i++)
     {
         out.write((char*)&crc_entries[i].crc, sizeof(uint32_t));
@@ -634,6 +847,8 @@ void BND::save(const std::string& path)
     for(int i=0; i<u32_data_zeroes; i++)
     out.put(0x0);
 
+    logger(0x20, "[BND]", "Adding contents...");
+
     for(int i=0; i<files.size(); i++)
     {
         out << Binary::uchar_to_file(files[i].data);
@@ -647,12 +862,16 @@ void BND::save(const std::string& path)
     }
 
     out.close();
+
+    logger(0x20, "[BND]", "Done. File saved at "+path);
 }
 
 void BND::save(const std::string& dict, const std::string& data)
 {
+    logger(0x20, "[BND]", "Saving file to "+dict+" and "+data);
     ofstream out(dict, ios::binary);
 
+    logger(0x20, "[BND]", "Building dictionary...");
     ///BND header
     uint32_t u32_header = 0x00444E42;
     uint32_t u32_version = version;
@@ -723,7 +942,7 @@ void BND::save(const std::string& dict, const std::string& data)
     int8_t prev_len = -1;
 
     file_offset = 0x0;
-    cout << "Start writing files at " << file_offset << endl;
+    logger(0x20, "[BND]", "Creating CRC entries...");
 
     for(unsigned int i=0; i<files.size(); i++)
     {
@@ -774,6 +993,8 @@ void BND::save(const std::string& dict, const std::string& data)
         }
     }
 
+    logger(0x20, "[BND]", "Saving CRC entries...");
+
     for(unsigned int i=0; i<crc_entries.size(); i++)
     {
         out.write((char*)&crc_entries[i].crc, sizeof(uint32_t));
@@ -801,7 +1022,7 @@ void BND::save(const std::string& dict, const std::string& data)
     out2.seekp(0);
 
     if(encrypt)
-    cout << "Encrypting..." << endl;
+    logger(0x90, "[P3Hash]", "Encrypting the data file...");
 
     for(int i=0; i<files.size(); i++)
     {
@@ -858,4 +1079,6 @@ void BND::save(const std::string& dict, const std::string& data)
     }
 
     out2.close();
+
+    logger(0x20, "[BND]", "Done. File saved at "+dict+" and "+data);
 }
